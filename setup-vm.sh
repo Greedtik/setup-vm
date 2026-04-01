@@ -1,4 +1,4 @@
-  #!/bin/bash
+#!/bin/bash
 
 # 0. Check Root
 if [ "$EUID" -ne 0 ]; then
