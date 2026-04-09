@@ -176,4 +176,29 @@ print_sub 100 "Restarting $SSH_SVC service..."
 systemctl restart "$SSH_SVC" > /dev/null 2>&1
 print_success "SSH service restarted to apply changes"
 
+# ---------------------------------------------------------
+# Step 7: Post-Installation Verification
+# ---------------------------------------------------------
+show_progress "Verifying Tools and Services"
+
+# 1. ตรวจสอบ Tools (คำสั่งที่เรียกใช้ได้)
+TOOLS_TO_CHECK=(htop vim curl wget jq tar unzip)
+for cmd in "${TOOLS_TO_CHECK[@]}"; do
+    if command -v "$cmd" > /dev/null 2>&1; then
+        print_success "Verified command: $cmd is ready"
+    else
+        printf "\r    [!] %-50s\e[K\n" "Missing command: $cmd"
+    fi
+done
+
+# 2. ตรวจสอบ Services ว่า Active อยู่หรือไม่
+SERVICES_TO_CHECK=(qemu-guest-agent "$TIME_SVC" "$SSH_SVC")
+for svc in "${SERVICES_TO_CHECK[@]}"; do
+    if systemctl is-active --quiet "$svc"; then
+        print_success "Verified service: $svc is RUNNING"
+    else
+        printf "\r    [!] %-50s\e[K\n" "Service NOT running: $svc"
+    fi
+done
+
 echo -e "\nSUCCESS: VM Setup completed! Enjoy your system, Admin."
