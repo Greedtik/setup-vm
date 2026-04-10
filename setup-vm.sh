@@ -9,8 +9,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 LOG_FILE="/var/log/vm-provisioning.log"
-# เคลียร์ไฟล์ Log เก่า (ถ้ามี) ก่อนเริ่มงานใหม่
-> "$LOG_FILE"
+> "$LOG_FILE" # เคลียร์ไฟล์เก่า
 
 echo "Starting Provisioning Script... Log will be saved to $LOG_FILE"
 # ส่งเฉพาะ Output ของ UI ไปที่หน้าจอและ Log
@@ -52,9 +51,9 @@ print_error() {
     printf "\r    [!] %-50s\e[K\n" "$msg"
 }
 
-# ฟังก์ชันสำหรับเขียน Log คั่นจังหวะเพื่อให้อ่านง่าย
 log_separator() {
-    echo -e "\n[LOG] --- $1 ---" >> "$LOG_FILE"
+    # ขึ้นบรรทัดใหม่ก่อนเขียนลง Log เพื่อแก้ปัญหาข้อความซ้อนทับจาก \r
+    echo -e "\n\n[LOG] === $1 ===" >> "$LOG_FILE"
 }
 
 # ==========================================
@@ -76,10 +75,12 @@ fi
 
 print_sub 66 "Setting up package manager variables..."
 if [[ "$OS" == "ubuntu" || "$OS" == "debian" || "$OS_FAMILY" == *"debian"* ]]; then
-    PKG_UPDATE="DEBIAN_FRONTEND=noninteractive apt-get update"
-    PKG_UPGRADE="DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
-    PKG_CLEAN="DEBIAN_FRONTEND=noninteractive apt-get autoremove -y"
-    PKG_INSTALL="DEBIAN_FRONTEND=noninteractive apt-get install -y"
+    # แก้บั๊ก: ประกาศตัวแปรแบบ Global สำหรับ OS ตระกูล Debian
+    export DEBIAN_FRONTEND=noninteractive
+    PKG_UPDATE="apt-get update"
+    PKG_UPGRADE="apt-get upgrade -y"
+    PKG_CLEAN="apt-get autoremove -y"
+    PKG_INSTALL="apt-get install -y"
     TOOLS=(psmisc htop vim curl wget jq net-tools tar unzip qemu-guest-agent systemd-timesyncd)
     FW_STOP="systemctl stop ufw"
     FW_DISABLE="systemctl disable ufw"
@@ -105,7 +106,7 @@ fi
 print_success "SSH service identified as '$SSH_SVC'"
 
 # ==========================================
-# Step 2: อัปเดตระบบ (พร้อมระบบ Wait for Lock)
+# Step 2: อัปเดตระบบ
 # ==========================================
 show_progress "Updating System Packages"
 log_separator "System Update Process"
@@ -147,8 +148,7 @@ for tool in "${TOOLS[@]}"; do
     
     print_sub "$TOOL_PCT" "Installing $tool..."
     
-    # บันทึกรายละเอียดการติดตั้งลงไฟล์ Log โดยตรง
-    echo "[LOG] Installing: $tool" >> "$LOG_FILE"
+    echo -e "\n[LOG] Installing: $tool" >> "$LOG_FILE"
     $PKG_INSTALL "$tool" >> "$LOG_FILE" 2>&1
     
     if [ $? -eq 0 ]; then
@@ -160,7 +160,11 @@ done
 
 print_sub 100 "Enabling QEMU Guest Agent..."
 systemctl enable --now qemu-guest-agent >> "$LOG_FILE" 2>&1
-print_success "QEMU Guest Agent configuration applied"
+if [ $? -eq 0 ]; then
+    print_success "QEMU Guest Agent configuration applied"
+else
+    print_error "FAILED to enable QEMU Guest Agent"
+fi
 
 # ==========================================
 # Step 4: ปิด Firewall
@@ -246,6 +250,6 @@ for svc in "${SVCS_CHECK[@]}"; do
 done
 
 echo -e "\n=========================================="
-echo "SUCCESS: VM Setup completed! Enjoy your system."
+echo "SUCCESS: VM Setup completed! Enjoy your system, กัปตัน."
 echo "Log file saved at: $LOG_FILE"
 echo "=========================================="
