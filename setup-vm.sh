@@ -9,9 +9,12 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 LOG_FILE="/var/log/vm-provisioning.log"
+# เคลียร์ไฟล์ Log เก่า (ถ้ามี) ก่อนเริ่มงานใหม่
+> "$LOG_FILE"
+
 echo "Starting Provisioning Script... Log will be saved to $LOG_FILE"
-# ส่ง Output และ Error ทั้งหมดไปที่หน้าจอและเขียนลงไฟล์พร้อมๆ กัน
-exec > >(tee -i "$LOG_FILE") 2>&1
+# ส่งเฉพาะ Output ของ UI ไปที่หน้าจอและ Log
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=========================================="
 echo "    Universal VM Provisioning Script      "
@@ -49,10 +52,16 @@ print_error() {
     printf "\r    [!] %-50s\e[K\n" "$msg"
 }
 
+# ฟังก์ชันสำหรับเขียน Log คั่นจังหวะเพื่อให้อ่านง่าย
+log_separator() {
+    echo -e "\n[LOG] --- $1 ---" >> "$LOG_FILE"
+}
+
 # ==========================================
 # Step 1: ตรวจสอบ OS และเตรียมตัวแปร
 # ==========================================
 show_progress "Detecting OS and Setting up Variables"
+log_separator "Starting OS Detection"
 
 print_sub 33 "Reading /etc/os-release..."
 if [ -f /etc/os-release ]; then
@@ -71,7 +80,6 @@ if [[ "$OS" == "ubuntu" || "$OS" == "debian" || "$OS_FAMILY" == *"debian"* ]]; t
     PKG_UPGRADE="DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
     PKG_CLEAN="DEBIAN_FRONTEND=noninteractive apt-get autoremove -y"
     PKG_INSTALL="DEBIAN_FRONTEND=noninteractive apt-get install -y"
-    # เพิ่ม psmisc เพื่อให้มีคำสั่ง fuser ไว้เช็ค Lock
     TOOLS=(psmisc htop vim curl wget jq net-tools tar unzip qemu-guest-agent systemd-timesyncd)
     FW_STOP="systemctl stop ufw"
     FW_DISABLE="systemctl disable ufw"
@@ -100,11 +108,10 @@ print_success "SSH service identified as '$SSH_SVC'"
 # Step 2: อัปเดตระบบ (พร้อมระบบ Wait for Lock)
 # ==========================================
 show_progress "Updating System Packages"
+log_separator "System Update Process"
 
-# ป้องกันปัญหา apt lock บน Ubuntu/Debian
 if [[ "$OS_FAMILY" == *"debian"* ]]; then
     print_sub 10 "Waiting for other package managers to finish..."
-    # ตรวจสอบว่ามี fuser ไหม ถ้าไม่มีให้ข้าม (สำหรับเครื่องที่คลีนมากๆ)
     if command -v fuser >/dev/null 2>&1; then
         while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
             sleep 5
@@ -114,21 +121,23 @@ if [[ "$OS_FAMILY" == *"debian"* ]]; then
 fi
 
 print_sub 33 "Updating repository lists..."
-eval "$PKG_UPDATE" > /dev/null 2>&1
+eval "$PKG_UPDATE" >> "$LOG_FILE" 2>&1
 print_success "Repository lists updated"
 
 print_sub 66 "Upgrading installed packages..."
-eval "$PKG_UPGRADE" > /dev/null 2>&1
+eval "$PKG_UPGRADE" >> "$LOG_FILE" 2>&1
 print_success "System packages upgraded"
 
 print_sub 100 "Cleaning up unnecessary files..."
-eval "$PKG_CLEAN" > /dev/null 2>&1
+eval "$PKG_CLEAN" >> "$LOG_FILE" 2>&1
 print_success "Cleanup completed"
 
 # ==========================================
 # Step 3: ติดตั้ง Tools และ QEMU Agent
 # ==========================================
 show_progress "Installing Essential Tools and QEMU Agent"
+log_separator "Tools Installation Process"
+
 TOTAL_TOOLS=${#TOOLS[@]}
 CURRENT_TOOL=0
 
@@ -137,7 +146,10 @@ for tool in "${TOOLS[@]}"; do
     TOOL_PCT=$((CURRENT_TOOL * 100 / TOTAL_TOOLS))
     
     print_sub "$TOOL_PCT" "Installing $tool..."
-    $PKG_INSTALL "$tool" > /dev/null 2>&1
+    
+    # บันทึกรายละเอียดการติดตั้งลงไฟล์ Log โดยตรง
+    echo "[LOG] Installing: $tool" >> "$LOG_FILE"
+    $PKG_INSTALL "$tool" >> "$LOG_FILE" 2>&1
     
     if [ $? -eq 0 ]; then
         print_success "Installed package: $tool"
@@ -147,43 +159,46 @@ for tool in "${TOOLS[@]}"; do
 done
 
 print_sub 100 "Enabling QEMU Guest Agent..."
-systemctl enable --now qemu-guest-agent > /dev/null 2>&1
+systemctl enable --now qemu-guest-agent >> "$LOG_FILE" 2>&1
 print_success "QEMU Guest Agent configuration applied"
 
 # ==========================================
 # Step 4: ปิด Firewall
 # ==========================================
 show_progress "Disabling Firewall"
+log_separator "Firewall Configuration"
 
 print_sub 50 "Stopping firewall service..."
-eval "$FW_STOP" > /dev/null 2>&1 || true
+eval "$FW_STOP" >> "$LOG_FILE" 2>&1 || true
 print_success "Firewall service stopped"
 
 print_sub 100 "Disabling firewall on boot..."
-eval "$FW_DISABLE" > /dev/null 2>&1 || true
+eval "$FW_DISABLE" >> "$LOG_FILE" 2>&1 || true
 print_success "Firewall disabled from boot"
 
 # ==========================================
 # Step 5: ตั้งค่า Timezone และ Time Sync
 # ==========================================
 show_progress "Configuring Timezone and Time Sync"
+log_separator "Timezone and Sync Process"
 
 print_sub 33 "Setting timezone to Asia/Bangkok..."
-timedatectl set-timezone Asia/Bangkok
+timedatectl set-timezone Asia/Bangkok >> "$LOG_FILE" 2>&1
 print_success "Timezone set to Asia/Bangkok"
 
 print_sub 66 "Enabling time sync service ($TIME_SVC)..."
-systemctl enable "$TIME_SVC" > /dev/null 2>&1
+systemctl enable "$TIME_SVC" >> "$LOG_FILE" 2>&1
 print_success "Time sync service enabled"
 
 print_sub 100 "Starting time sync service..."
-systemctl restart "$TIME_SVC" > /dev/null 2>&1
+systemctl restart "$TIME_SVC" >> "$LOG_FILE" 2>&1
 print_success "Time synchronization is now active"
 
 # ==========================================
 # Step 6: ตั้งค่า SSH
 # ==========================================
 show_progress "Configuring SSH Access"
+log_separator "SSH Configuration"
 
 SSH_CONF="/etc/ssh/sshd_config"
 print_sub 33 "Backing up sshd_config..."
@@ -201,15 +216,16 @@ fi
 print_success "SSH Password Authentication set to: $SSH_STATUS"
 
 print_sub 100 "Restarting $SSH_SVC service..."
-systemctl restart "$SSH_SVC" > /dev/null 2>&1
+systemctl restart "$SSH_SVC" >> "$LOG_FILE" 2>&1
 print_success "SSH service restarted"
 
 # ==========================================
-# Step 7: Final Verification (The "No Bug" Audit)
+# Step 7: Final Verification
 # ==========================================
 show_progress "Verifying Tools and Services"
+log_separator "Final Verification"
 
-# ตรวจสอบคำสั่ง (รวม ifconfig จาก net-tools)
+# ตรวจสอบคำสั่ง
 TOOLS_CHECK=(htop vim curl wget jq tar unzip ifconfig netstat)
 for cmd in "${TOOLS_CHECK[@]}"; do
     if command -v "$cmd" > /dev/null 2>&1; then
@@ -230,6 +246,6 @@ for svc in "${SVCS_CHECK[@]}"; do
 done
 
 echo -e "\n=========================================="
-echo "SUCCESS: VM Setup completed! Enjoy your system, กัปตัน."
+echo "SUCCESS: VM Setup completed! Enjoy your system."
 echo "Log file saved at: $LOG_FILE"
 echo "=========================================="
