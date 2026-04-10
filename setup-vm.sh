@@ -204,7 +204,9 @@ print_success "SSH service restarted to apply changes"
 show_progress "Verifying Tools and Services"
 
 # 1. ตรวจสอบ Tools (คำสั่งที่เรียกใช้ได้)
-TOOLS_TO_CHECK=(htop vim curl wget jq tar unzip)
+# เปลี่ยนจากของเดิม ให้มี ifconfig รวมอยู่ด้วย
+TOOLS_TO_CHECK=(htop vim curl wget jq tar unzip ifconfig)
+
 for cmd in "${TOOLS_TO_CHECK[@]}"; do
     if command -v "$cmd" > /dev/null 2>&1; then
         print_success "Verified command: $cmd is ready"
