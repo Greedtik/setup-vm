@@ -23,7 +23,7 @@ read -p "[?] Allow SSH Password Authentication? (y/n): " ssh_pass_choice < /dev/
 # ==========================================
 # Functions for Progress & Logging
 # ==========================================
-TOTAL_STEPS=7 # อัปเดตจำนวน Step เป็น 7
+TOTAL_STEPS=7
 CURRENT_STEP=0
 
 show_progress() {
@@ -33,20 +33,17 @@ show_progress() {
     echo -e "=========================================="
 }
 
-# ฟังก์ชันแสดง Sub-progress (กำลังทำงาน)
 print_sub() {
     local pct=$1
     local msg=$2
     printf "\r    -> [%3d%%] %-45s\e[K" "$pct" "$msg"
 }
 
-# ฟังก์ชันแสดงผลลัพธ์เมื่อทำงานเสร็จ
 print_success() {
     local msg=$1
     printf "\r    [+] %-50s\e[K\n" "$msg"
 }
 
-# ฟังก์ชันแสดงผลลัพธ์เมื่อเกิดข้อผิดพลาด
 print_error() {
     local msg=$1
     printf "\r    [!] %-50s\e[K\n" "$msg"
@@ -74,7 +71,8 @@ if [[ "$OS" == "ubuntu" || "$OS" == "debian" || "$OS_FAMILY" == *"debian"* ]]; t
     PKG_UPGRADE="DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
     PKG_CLEAN="DEBIAN_FRONTEND=noninteractive apt-get autoremove -y"
     PKG_INSTALL="DEBIAN_FRONTEND=noninteractive apt-get install -y"
-    TOOLS=(htop vim curl wget jq net-tools tar unzip qemu-guest-agent systemd-timesyncd)
+    # เพิ่ม psmisc เพื่อให้มีคำสั่ง fuser ไว้เช็ค Lock
+    TOOLS=(psmisc htop vim curl wget jq net-tools tar unzip qemu-guest-agent systemd-timesyncd)
     FW_STOP="systemctl stop ufw"
     FW_DISABLE="systemctl disable ufw"
     TIME_SVC="systemd-timesyncd"
@@ -88,7 +86,7 @@ elif [[ "$OS" == "centos" || "$OS" == "rocky" || "$OS" == "almalinux" || "$OS" =
     FW_DISABLE="systemctl disable firewalld"
     TIME_SVC="chronyd"
 fi
-print_success "Package manager configured ($PKG_INSTALL)"
+print_success "Package manager configured"
 
 print_sub 100 "Detecting SSH service name..."
 if systemctl list-unit-files | grep -q "^sshd.service"; then
@@ -99,9 +97,21 @@ fi
 print_success "SSH service identified as '$SSH_SVC'"
 
 # ==========================================
-# Step 2: อัปเดตระบบ
+# Step 2: อัปเดตระบบ (พร้อมระบบ Wait for Lock)
 # ==========================================
 show_progress "Updating System Packages"
+
+# ป้องกันปัญหา apt lock บน Ubuntu/Debian
+if [[ "$OS_FAMILY" == *"debian"* ]]; then
+    print_sub 10 "Waiting for other package managers to finish..."
+    # ตรวจสอบว่ามี fuser ไหม ถ้าไม่มีให้ข้าม (สำหรับเครื่องที่คลีนมากๆ)
+    if command -v fuser >/dev/null 2>&1; then
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+            sleep 5
+        done
+    fi
+    print_success "System ready for package management"
+fi
 
 print_sub 33 "Updating repository lists..."
 eval "$PKG_UPDATE" > /dev/null 2>&1
@@ -109,11 +119,11 @@ print_success "Repository lists updated"
 
 print_sub 66 "Upgrading installed packages..."
 eval "$PKG_UPGRADE" > /dev/null 2>&1
-print_success "System packages upgraded to latest versions"
+print_success "System packages upgraded"
 
 print_sub 100 "Cleaning up unnecessary files..."
 eval "$PKG_CLEAN" > /dev/null 2>&1
-print_success "Unnecessary cache and orphaned packages removed"
+print_success "Cleanup completed"
 
 # ==========================================
 # Step 3: ติดตั้ง Tools และ QEMU Agent
@@ -129,7 +139,6 @@ for tool in "${TOOLS[@]}"; do
     print_sub "$TOOL_PCT" "Installing $tool..."
     $PKG_INSTALL "$tool" > /dev/null 2>&1
     
-    # ตรวจสอบ Exit Status ของคำสั่ง
     if [ $? -eq 0 ]; then
         print_success "Installed package: $tool"
     else
@@ -139,16 +148,12 @@ done
 
 print_sub 100 "Enabling QEMU Guest Agent..."
 systemctl enable --now qemu-guest-agent > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-    print_success "QEMU Guest Agent service enabled and running"
-else
-    print_error "FAILED to enable QEMU Guest Agent"
-fi
+print_success "QEMU Guest Agent configuration applied"
 
 # ==========================================
 # Step 4: ปิด Firewall
 # ==========================================
-show_progress "Disabling Firewall for Cluster Compatibility"
+show_progress "Disabling Firewall"
 
 print_sub 50 "Stopping firewall service..."
 eval "$FW_STOP" > /dev/null 2>&1 || true
@@ -156,7 +161,7 @@ print_success "Firewall service stopped"
 
 print_sub 100 "Disabling firewall on boot..."
 eval "$FW_DISABLE" > /dev/null 2>&1 || true
-print_success "Firewall disabled from starting on boot"
+print_success "Firewall disabled from boot"
 
 # ==========================================
 # Step 5: ตั้งค่า Timezone และ Time Sync
@@ -169,7 +174,7 @@ print_success "Timezone set to Asia/Bangkok"
 
 print_sub 66 "Enabling time sync service ($TIME_SVC)..."
 systemctl enable "$TIME_SVC" > /dev/null 2>&1
-print_success "Time sync service ($TIME_SVC) enabled"
+print_success "Time sync service enabled"
 
 print_sub 100 "Starting time sync service..."
 systemctl restart "$TIME_SVC" > /dev/null 2>&1
@@ -188,44 +193,43 @@ print_success "Backup created at ${SSH_CONF}.bak"
 print_sub 66 "Applying PasswordAuthentication rule..."
 if [[ "$ssh_pass_choice" == "n" || "$ssh_pass_choice" == "N" ]]; then
     sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' $SSH_CONF
-    print_success "SSH Password Authentication configured to: NO"
+    SSH_STATUS="NO"
 else
     sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' $SSH_CONF
-    print_success "SSH Password Authentication configured to: YES"
+    SSH_STATUS="YES"
 fi
+print_success "SSH Password Authentication set to: $SSH_STATUS"
 
 print_sub 100 "Restarting $SSH_SVC service..."
 systemctl restart "$SSH_SVC" > /dev/null 2>&1
-print_success "SSH service restarted to apply changes"
+print_success "SSH service restarted"
 
 # ==========================================
-# Step 7: Post-Installation Verification
+# Step 7: Final Verification (The "No Bug" Audit)
 # ==========================================
 show_progress "Verifying Tools and Services"
 
-# 1. ตรวจสอบ Tools (คำสั่งที่เรียกใช้ได้)
-# เปลี่ยนจากของเดิม ให้มี ifconfig รวมอยู่ด้วย
-TOOLS_TO_CHECK=(htop vim curl wget jq tar unzip ifconfig)
-
-for cmd in "${TOOLS_TO_CHECK[@]}"; do
+# ตรวจสอบคำสั่ง (รวม ifconfig จาก net-tools)
+TOOLS_CHECK=(htop vim curl wget jq tar unzip ifconfig netstat)
+for cmd in "${TOOLS_CHECK[@]}"; do
     if command -v "$cmd" > /dev/null 2>&1; then
-        print_success "Verified command: $cmd is ready"
+        print_success "Verified: '$cmd' is ready to use"
     else
-        print_error "Missing command: $cmd"
+        print_error "Missing: '$cmd' is NOT installed correctly"
     fi
 done
 
-# 2. ตรวจสอบ Services ว่า Active อยู่หรือไม่
-SERVICES_TO_CHECK=(qemu-guest-agent "$TIME_SVC" "$SSH_SVC")
-for svc in "${SERVICES_TO_CHECK[@]}"; do
+# ตรวจสอบเซอร์วิส
+SVCS_CHECK=(qemu-guest-agent "$TIME_SVC" "$SSH_SVC")
+for svc in "${SVCS_CHECK[@]}"; do
     if systemctl is-active --quiet "$svc"; then
-        print_success "Verified service: $svc is RUNNING"
+        print_success "Verified: Service '$svc' is RUNNING"
     else
-        print_error "Service NOT running: $svc"
+        print_error "Error: Service '$svc' is NOT active"
     fi
 done
 
-# ==========================================
-# Finish
-# ==========================================
-echo -e "\nSUCCESS: VM Setup completed! Enjoy your system, Admin."
+echo -e "\n=========================================="
+echo "SUCCESS: VM Setup completed! Enjoy your system, กัปตัน."
+echo "Log file saved at: $LOG_FILE"
+echo "=========================================="
