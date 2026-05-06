@@ -250,6 +250,6 @@ for svc in "${SVCS_CHECK[@]}"; do
 done
 
 echo -e "\n=========================================="
-echo "SUCCESS: VM Setup completed! Enjoy your system, กัปตัน."
+echo "SUCCESS: VM Setup completed! Enjoy your system, Admin."
 echo "Log file saved at: $LOG_FILE"
 echo "=========================================="
